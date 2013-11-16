@@ -3,29 +3,6 @@ bac
 bge android controller
 
 See readme for usage and examples folder for implementation specifics.
-
-
-The MIT License (MIT)
-
-Copyright (c) 2013 Andrew Bentley
-
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in
-all copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
-THE SOFTWARE.
 '''
 
 import json
@@ -33,7 +10,7 @@ import socket
 import time
 
 
-SERVER_PORT = 0  # 0 = any free socket
+SERVER_PORT = 5558  # 0 = any free socket
 BROADCAST_PORT = 38401  # if you change this be sure to change the android app
 BROADCAST_DELAY = 1.0  # seconds between broadcasts
 DEVICE_LIMIT = -1  # -1 = inf
@@ -51,7 +28,7 @@ class Server:
     '''
     The main component to the bac. Handles the connecting and disconnecting of
     different devices as well as devices requesting to fill a slot and devices
-    relinquishing a hold a slot.
+    relinquishing their hold on a slot.
     '''
     def __init__(self, name, local=False):
         '''
@@ -64,8 +41,8 @@ class Server:
         self.devices = []
 
         # Initialise server socket (TCP)
-        address = '127.0.0.1' if local else self.socket.getsockname()[1]
         self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        address = '127.0.0.1' if local else socket.gethostname()
         self.socket.bind((address, SERVER_PORT))
         self.socket.setblocking(False)
         self.socket.listen(5)
@@ -89,10 +66,7 @@ class Server:
         return slot
 
     def request_slot(self, device, slot):
-        '''
-        Check if the requested slot is available, fill it with the requesting
-        device if it is.
-        '''
+        '''Fill a particular slot with a device if that slot is available'''
         if self.slots[slot].device is None and device.slot is None:
             self.slots[slot].device = device
             device.slot = self.slots[slot]
@@ -160,25 +134,19 @@ class Slot:
 
         self.device = None
 
-    @property
-    def touch_points(self):
+    def __getattr__(self, attr):
         if self.device:
-            return self.device.touch_points    
+            if attr is self.device.peripherals:
+                return self.device.peripherals[attr]
+            else:
+                raise AttributeError("Device has no peripheral '{}'").format(
+                    attr)
 
 
 class Device:
     '''
-    Devices represent the android device. Devices are created when a new
-    conneciton is made to the server and each connection is assumed to be a
-    unique device.
-
-    Devices can request to fill a slot and the server will grant that request if
-    the requested slot is empty and if the requesting device isn't already in a
-    slot.
-
-    Once the connection from a device to the server is closed any hold that the
-    device has a slot will be relinquished and the device will be removed from
-    memory.
+    A representation of an Android device. Contains all the code for managing
+    the communication between the device and the server.
     '''
     def __init__(self, server, connection, address, port):
         self.server = server
@@ -187,6 +155,7 @@ class Device:
         self.port = port
 
         self.slot = None
+        self.buffer = ''
 
         self.commands = {
             'get_slots': self.process_get_slots,
@@ -203,7 +172,7 @@ class Device:
         '''Send a message through the socket'''
         log('[<-] {}: {} {}'.format(self.address, msg['response'],
             json.dumps(msg['args'], sort_keys=True)))
-        msg = json.dumps(msg) + "\n"
+        msg = json.dumps(msg)
         self.connection.send(bytes(msg, ENCODING))
 
     def process_get_slots(self):
@@ -223,7 +192,7 @@ class Device:
         msg = {
             'bac': 1,
             'response': 'request_slot',
-            'args': [1 if self.server.request_slot(self, slot) else 0]
+            'args': [self.server.request_slot(self, slot)]
         }
         self.send(msg)
 
@@ -256,21 +225,51 @@ class Device:
                         log('[->] {}: {} {}'.format(self.address, command, args))
                         func(*args)
                 else:
-                    log('[E] {} sending wrong version number'.format(self.address))
+                    log('[E] {} sent wrong version number'.format(self.address))
 
     def process(self):
         '''Process any data incoming from device'''
         try:
             data = self.connection.recv(4096).decode(ENCODING)
-            if data:
-                for command in data.split("\n"):
-                    self.process_command(command)
-            else:
+
+            if not data:
                 # socket closed, removing device also relinquishes slot
                 self.connection.close()
                 self.server.remove_device(self)
+                return
+
+            if self.buffer:
+                # Prepend any buffer left over from earlier
+                data = self.buffer + data
+                self.buffer = ''
+
+            while data:
+                # Ignore any characters before opening brace
+                data = data[data.index('{'):]
+
+                # Find matching closing brace
+                brackets = 0
+                for end, char in enumerate(data):
+                    if char == '{':
+                        brackets += 1
+                    elif char == '}':
+                        brackets -= 1
+                    if brackets == 0:
+                        # Closing brace has been found
+                        break
+                else:
+                    # Closing brace wasn't found, append data to buffer
+                    self.buffer = data
+                    break
+
+                self.process_command(data[:end+1])
+                data = data[end+2:]
 
         except socket.error:
+            # There wasn't any data waiting in the socket, continue on
+            pass
+        except ValueError:
+            # data did not have opening brace ({), data was not proper json
             pass
 
 

@@ -1,7 +1,7 @@
 [C] 127.0.0.1
 [C] 127.0.0.1
 [C] 127.0.0.1
-[E] 127.0.0.1 sending wrong version number
+[E] 127.0.0.1 sent wrong version number
 [->] 127.0.0.1: get_slots []
 [<-] 127.0.0.1: get_slots [{"available": true, "name": "Slot 1", "slot": 0}, {"available": true, "name": "Slot 2", "slot": 1}]
 [->] 127.0.0.1: request_slot [0]

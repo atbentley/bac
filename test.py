@@ -50,7 +50,7 @@ def recv(socket):
 class log:
     '''This logger compares incoming logs with those from a success log file.'''
     def __init__(self):
-        with open('successful.txt', 'r') as f:
+        with open('success.txt', 'r') as f:
             self.lines = f.readlines()
 
     def __call__(self, c):
@@ -67,7 +67,7 @@ class log:
 class log2:
     '''This logger writes logs to a file ot be used a success log file.'''
     def __init__(self):
-        self.f = open('successful.txt', 'w')
+        self.f = open('success.txt', 'w')
         self.f.truncate(0)
 
     def __call__(self, c):
@@ -186,6 +186,6 @@ def test(write=False):
 
 if __name__ == '__main__':
     try:
-        test(write=False)
+        test(write=True)
     except TestError:
         pass
